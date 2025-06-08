@@ -1,0 +1,7 @@
+flask
+scikit-learn
+opencv-python-headless
+numpy
+joblib
+pandas
+plotly
