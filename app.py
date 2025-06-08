@@ -18,6 +18,12 @@ try:
 except Exception as e:
     raise FileNotFoundError("File model.pkl tidak ditemukan. Jalankan train_model.py terlebih dahulu.")
 
+# Muat scaler
+try:
+    scaler = joblib.load('scaler.pkl')
+except Exception as e:
+    raise FileNotFoundError("File scaler.pkl tidak ditemukan. Jalankan train_model.py terlebih dahulu.")
+
 # Mapping hasil prediksi
 class_names = {
     0: "Karton",
@@ -31,38 +37,46 @@ class_names = {
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        file = request.files["file"]
+        if 'file' not in request.files:
+            return 'Tidak ada file yang diunggah'
+        
+        file = request.files['file']
+        if file.filename == '':
+            return 'Tidak ada file yang dipilih'
+        
         if file:
-            filename = secure_filename(file.filename)
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-
-            # Preprocessing gambar
-            img = cv2.imread(filepath)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Konversi BGR ke RGB
-            img = cv2.resize(img, (64, 64))
-            img_flattened = img.flatten().reshape(1, -1) # Reshape untuk prediksi tunggal
-
-            # Muat scaler
-            try:
-                scaler = joblib.load('scaler.pkl')
-                img_flattened = scaler.transform(img_flattened)
-            except:
-                print("[WARNING] File scaler.pkl tidak ditemukan. Prediksi mungkin tidak akurat.")
-
-            # Lakukan prediksi dan dapatkan probabilitas
-            prediction = model.predict(img_flattened)
+            # Baca gambar
+            img = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
+            
+            # Konversi ke RGB
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # Normalisasi gambar
+            img = img.astype(np.float32) / 255.0
+            
+            # Resize ke ukuran yang sama dengan data training (128x128)
+            img_resized = cv2.resize(img, (128, 128), interpolation=cv2.INTER_AREA)
+            
+            # Flatten gambar
+            img_flattened = img_resized.flatten().reshape(1, -1)
+            
+            # Normalisasi dengan scaler yang sama
+            img_scaled = scaler.transform(img_flattened)
+            
+            # Prediksi
+            prediction = model.predict(img_scaled)
+            probability = model.predict_proba(img_scaled)
+            
+            # Ambil kelas dengan probabilitas tertinggi
             predicted_class = class_names[prediction[0]]
-
-            # Dapatkan probabilitas prediksi
-            probabilities = model.predict_proba(img_flattened)[0]
-            # Format probabilitas untuk ditampilkan
-            formatted_probabilities = {
-                class_names[i]: prob * 100 for i, prob in enumerate(probabilities)
-            }
-
-            return render_template("result.html", image=filename, result=predicted_class, probabilities=formatted_probabilities)
-    return render_template("index.html")
+            confidence = probability[0][prediction[0]] * 100
+            
+            return render_template('index.html', 
+                                 prediction=predicted_class,
+                                 confidence=confidence,
+                                 image=file.filename)
+    
+    return render_template('index.html')
 
 @app.route("/analysis")
 def analysis():

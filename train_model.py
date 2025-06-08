@@ -16,6 +16,8 @@ import plotly.graph_objects as go # Import plotly graph objects
 import json # Import json
 import plotly.utils # Import plotly.utils
 import albumentations as A  # Untuk augmentasi data
+from sklearn.model_selection import cross_val_score
+from sklearn.metrics import precision_recall_fscore_support
 
 print("1. Memulai preprocessing dataset...")
 
@@ -23,12 +25,13 @@ def augment_image(img):
     """Fungsi untuk augmentasi gambar"""
     transform = A.Compose([
         A.RandomRotate90(p=0.5),
-        A.Flip(p=0.5),
-        A.ShiftScaleRotate(shift_limit=0.0625, scale_limit=0.1, rotate_limit=45, p=0.5),
+        A.HorizontalFlip(p=0.5),
+        A.VerticalFlip(p=0.5),
+        A.Affine(rotate=45, scale=0.1, translate_percent=0.0625, p=0.5),
         A.OneOf([
-            A.ElasticTransform(alpha=120, sigma=120 * 0.05, alpha_affine=120 * 0.03, p=0.5),
+            A.ElasticTransform(alpha=120, sigma=120 * 0.05, p=0.5),
             A.GridDistortion(p=0.5),
-            A.OpticalDistortion(distort_limit=1, shift_limit=0.5, p=0.5),
+            A.OpticalDistortion(distort_limit=1, p=0.5),
         ], p=0.3),
         A.OneOf([
             A.GaussNoise(p=0.5),
@@ -38,20 +41,27 @@ def augment_image(img):
     ])
     return transform(image=img)['image']
 
-def load_images_from_folder(folder, label, img_size=(64, 64), augment=True):
+def load_images_from_folder(folder, label, img_size=(128, 128), augment=True):
     images = []
     labels = []
     for filename in os.listdir(folder):
         img_path = os.path.join(folder, filename)
-        img = cv2.imread(img_path)  # Baca gambar menggunakan cv2.imread()
+        img = cv2.imread(img_path)
         if img is not None:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Konversi BGR ke RGB
-            img_resized = cv2.resize(img, img_size)
-            # Flatten gambar dari shape (H, W, C) → (H*W*C,)
+            # Konversi ke RGB
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            
+            # Normalisasi gambar
+            img = img.astype(np.float32) / 255.0
+            
+            # Resize dengan interpolasi yang lebih baik
+            img_resized = cv2.resize(img, img_size, interpolation=cv2.INTER_AREA)
+            
+            # Tambahkan gambar asli
             images.append(img_resized.flatten())
             labels.append(label)
             
-            # Tambahkan gambar augmentasi jika diaktifkan
+            # Augmentasi jika diaktifkan
             if augment:
                 augmented_img = augment_image(img_resized)
                 images.append(augmented_img.flatten())
@@ -128,23 +138,53 @@ print("\n2. Mulai pelatihan model...")
 
 # Latih model dengan parameter yang dioptimalkan
 model = RandomForestClassifier(
-    n_estimators=200,  # Jumlah pohon lebih banyak
-    max_depth=15,      # Kedalaman maksimum pohon
-    min_samples_split=5,
-    min_samples_leaf=2,
-    max_features='sqrt',
+    n_estimators=500,          # Meningkatkan jumlah pohon
+    max_depth=20,              # Meningkatkan kedalaman maksimum
+    min_samples_split=2,       # Mengurangi minimum samples untuk split
+    min_samples_leaf=1,        # Mengurangi minimum samples per leaf
+    max_features='sqrt',       # Menggunakan sqrt dari jumlah fitur
+    bootstrap=True,            # Menggunakan bootstrap sampling
     random_state=42,
-    n_jobs=-1  # Gunakan semua core CPU
+    n_jobs=-1,                 # Menggunakan semua core CPU
+    class_weight='balanced'    # Menangani ketidakseimbangan kelas
 )
+
+# Tambahkan validasi data sebelum training
+print("\nValidasi data sebelum training:")
+print(f"Jumlah sampel per kelas:")
+for label in np.unique(y):
+    count = np.sum(y == label)
+    print(f"{class_names[label]}: {count} sampel")
+
+# Tambahkan cross-validation
+cv_scores = cross_val_score(model, X_scaled, y, cv=5)
+print(f"\nCross-validation scores: {cv_scores}")
+print(f"Rata-rata CV score: {cv_scores.mean():.3f} (+/- {cv_scores.std() * 2:.3f})")
+
+# Latih model
 model.fit(X_train, y_train)
+
+# Evaluasi lebih detail
+from sklearn.metrics import precision_recall_fscore_support
 
 # Prediksi
 y_pred = model.predict(X_test)
 
-# Evaluasi
+# Evaluasi per kelas
+precision, recall, f1, support = precision_recall_fscore_support(y_test, y_pred)
+
+print("\nEvaluasi per kelas:")
+for i, class_name in class_names.items():
+    print(f"\n{class_name}:")
+    print(f"Precision: {precision[i]:.3f}")
+    print(f"Recall: {recall[i]:.3f}")
+    print(f"F1-score: {f1[i]:.3f}")
+    print(f"Support: {support[i]}")
+
+# Evaluasi keseluruhan
 acc = accuracy_score(y_test, y_pred)
 print(f"\nAkurasi Model: {acc * 100:.2f}%")
-report = classification_report(y_test, y_pred, target_names=[class_names[i] for i in sorted(class_names.keys())]) # Gunakan class_names
+report = classification_report(y_test, y_pred, target_names=[class_names[i] for i in sorted(class_names.keys())])
 print("\nLaporan Klasifikasi:\n", report)
 
 # Confusion Matrix (Plotly)
