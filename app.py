@@ -1,11 +1,10 @@
-from flask import Flask, render_template, request, redirect, url_for
-from werkzeug.utils import secure_filename
+from flask import Flask, request, render_template
 import cv2
 import numpy as np
+import joblib
 import os
 import plotly.express as px
 import json
-import joblib
 import plotly.utils
 
 app = Flask(__name__)
@@ -34,9 +33,9 @@ class_names = {
     5: "Sampah Lainnya"
 }
 
-@app.route("/", methods=["GET", "POST"])
+@app.route('/', methods=['GET', 'POST'])
 def index():
-    if request.method == "POST":
+    if request.method == 'POST':
         if 'file' not in request.files:
             return 'Tidak ada file yang diunggah'
         
@@ -132,5 +131,5 @@ def analysis():
         classification_report_text=classification_report_text
     )
 
-if __name__ == "__main__":
-    app.run(debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
